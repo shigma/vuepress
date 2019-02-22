@@ -58,6 +58,8 @@ module.exports = function (src) {
 
   // observe dependency changes
   const observe = callback => (...args) => {
+    const { loader } = args[3]
+
     const result = {
       deps: [],
       ctxDeps: []
@@ -82,21 +84,22 @@ module.exports = function (src) {
 
   const { rules } = markdown.renderer
   for (const name in rules) {
-    const rule = rules[name]
-    if (rule._cached) continue
-    rules[name] = (tokens, index, options, env, self) => {
-      const { _output } = tokens[index]
-      if (typeof _output === 'string') {
-        return _output
-      } else {
-        const { deps, ctxDeps, output } = observe(rule)(tokens, index, options, env, self)
-        deps.forEach(loader.addDependency)
-        ctxDeps.forEach(loader.addContextDependency)
-        if (deps.length + ctxDeps.length === 0) {
-          tokens[index]._output = output
-        }
-        return output
+    if (rules[name]._cached) continue
+    const rule = observe(rules[name])
+    rules[name] = (...args) => {
+      const token = args[0][args[1]]
+      if (typeof token._output === 'string') {
+        return token._output
       }
+      const { deps, ctxDeps, output = '' } = rule(...args)
+      deps.forEach(loader.addDependency)
+      ctxDeps.forEach(loader.addContextDependency)
+      if (deps.length + ctxDeps.length === 0) {
+        token._output = output
+      } else {
+        token._output = undefined
+      }
+      return output
     }
     rules[name]._cached = true
   }
