@@ -6,7 +6,7 @@
 
 const { EventEmitter } = require('events')
 const { getOptions } = require('loader-utils')
-const { fs, path, hash, parseFrontmatter, inferTitle, extractHeaders } = require('@vuepress/shared-utils')
+const { fs, path, parseFrontmatter, inferTitle, extractHeaders } = require('@vuepress/shared-utils')
 const LRU = require('lru-cache')
 const md = require('@vuepress/markdown')
 
@@ -57,23 +57,21 @@ module.exports = function (src) {
   }
 
   // observe dependency changes
-  function observe (callback) {
+  const observe = callback => (...args) => {
     const result = {
       deps: [],
       ctxDeps: []
     }
 
     function addObserver (key, type) {
-      loader[key] = (file) => {
-        result[type].push(file)
-      }
+      loader[key] = file => result[type].push(file)
     }
 
     addObserver('addContextDependency', 'ctxDeps')
     addObserver('addDependency', 'deps')
     addObserver('dependency', 'deps')
 
-    result.output = callback()
+    result.output = callback(...args)
 
     delete loader.addContextDependency
     delete loader.addDependency
@@ -85,23 +83,22 @@ module.exports = function (src) {
   const { rules } = markdown.renderer
   for (const name in rules) {
     const rule = rules[name]
-    const cache = rule.__cache__ || new LRU({ max: 100 })
-
-    rules[name] = (...args) => {
-      const key = hash(args.slice(0, 3))
-      let result = cache.get(key)
-      if (!result) {
-        result = observe(() => rule(...args))
-        cache.set(key, result)
+    if (rule._cached) continue
+    rules[name] = (tokens, index, options, env, self) => {
+      const { _output } = tokens[index]
+      if (typeof _output === 'string') {
+        return _output
+      } else {
+        const { deps, ctxDeps, output } = observe(rule)(tokens, index, options, env, self)
+        deps.forEach(loader.addDependency)
+        ctxDeps.forEach(loader.addContextDependency)
+        if (deps.length + ctxDeps.length === 0) {
+          tokens[index]._output = output
+        }
+        return output
       }
-      result.deps.forEach(loader.addDependency)
-      result.ctxDeps.forEach(loader.addContextDependency)
-      return result.output
     }
-
-    if (!rule.__cache__) {
-      Object.defineProperty(rules[name], '__cache__', { value: cache })
-    }
+    rules[name]._cached = true
   }
 
   // the render method has been augmented to allow plugins to
